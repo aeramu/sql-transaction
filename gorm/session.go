@@ -19,13 +19,17 @@ func New(db *gorm.DB) *DB {
 
 type txKey struct {}
 
-func getTx(ctx context.Context) *gorm.DB {
-	return ctx.Value(txKey{}).(*gorm.DB)
+func getTx(ctx context.Context) (*gorm.DB, bool) {
+	tx, ok := ctx.Value(txKey{}).(*gorm.DB)
+	if !ok || tx == nil {
+		return nil, false
+	}
+	return tx, true
 }
 
 func (s *DB) WithTransaction(ctx context.Context, f func (ctx context.Context) error) error {
-	tx := getTx(ctx)
-	if tx == nil {
+	tx, txExist := getTx(ctx)
+	if !txExist {
 		tx = s.db.WithContext(ctx).Begin(s.txOpt)
 		if tx.Error != nil {
 			return tx.Error
@@ -34,15 +38,20 @@ func (s *DB) WithTransaction(ctx context.Context, f func (ctx context.Context) e
 	}
 	err := f(ctx)
 	if err != nil {
-		tx.Rollback()
+		if !txExist {
+			tx.Rollback()
+		}
 		return err
 	}
-	return tx.Commit().Error
+	if !txExist {
+		return tx.Commit().Error
+	}
+	return nil
 }
 
 func (s *DB) GetDB(ctx context.Context) *gorm.DB {
-	tx := getTx(ctx)
-	if tx == nil {
+	tx, exist := getTx(ctx)
+	if !exist {
 		return s.db
 	}
 	return tx
