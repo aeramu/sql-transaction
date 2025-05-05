@@ -20,7 +20,7 @@ type TransactionTestSuite struct {
 	gsession *Session
 	gdb      *gorm.DB
 	db       *sql.DB
-	session  session.Session
+	session  *session.Session
 }
 
 type model struct {
@@ -44,7 +44,7 @@ func (s *TransactionTestSuite) SetupTest() {
 	s.gdb = gdb
 	s.gsession = New(gdb)
 	s.db = db
-	s.session = session.NewSession(db)
+	s.session = session.New(db)
 }
 
 func (s *TransactionTestSuite) TestGetTx_noTx() {

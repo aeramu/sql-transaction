@@ -1,5 +1,7 @@
 github.com/aeramu/sql-transaction/session v0.0.0-20250505023324-9cf52c87dd5e h1:kwOPjyCHuHT00h6ydNRr+eGgdsRhYKXcvSzBxL1/Mws=
 github.com/aeramu/sql-transaction/session v0.0.0-20250505023324-9cf52c87dd5e/go.mod h1:TRnIFYCXzYgfF5ikBne871VFiArJBRUyBYv/N45TCy4=
+github.com/aeramu/sql-transaction/session v0.1.0 h1:GIiODaKIBp+NpRLDF9bRg+bgaZmQUOPRbvus3XCPsu8=
+github.com/aeramu/sql-transaction/session v0.1.0/go.mod h1:TRnIFYCXzYgfF5ikBne871VFiArJBRUyBYv/N45TCy4=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/jinzhu/inflection v1.0.0 h1:K317FqzuhWc8YvSVlFMCCUb36O/S9MCKRDI7QkRKD/E=
