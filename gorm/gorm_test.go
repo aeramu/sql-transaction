@@ -17,10 +17,10 @@ import (
 
 type TransactionTestSuite struct {
 	suite.Suite
-	gsession *Session
-	gdb      *gorm.DB
-	db       *sql.DB
-	session  *session.Session
+	wrapper session.DBWrapper[*gorm.DB]
+	gdb     *gorm.DB
+	db      *sql.DB
+	session session.Session
 }
 
 type model struct {
@@ -42,38 +42,20 @@ func (s *TransactionTestSuite) SetupTest() {
 	s.Require().NoError(err)
 
 	s.gdb = gdb
-	s.gsession = New(gdb)
+	s.wrapper = NewDB(gdb)
 	s.db = db
-	s.session = session.New(db)
-}
-
-func (s *TransactionTestSuite) TestGetTx_noTx() {
-	tx, exist := s.gsession.getTx(context.Background())
-	s.False(exist)
-	s.Nil(tx)
-}
-
-func (s *TransactionTestSuite) TestGetTx_txWrongType() {
-	ctx := session.WithTx(context.Background(), "any")
-
-	tx, exist := s.gsession.getTx(ctx)
-	s.False(exist)
-	s.Nil(tx)
-}
-
-func (s *TransactionTestSuite) TestGetTx_success() {
-	tx, err := s.db.Begin()
-	s.Require().NoError(err)
-	ctx := session.WithTx(context.Background(), tx)
-
-	db, exist := s.gsession.getTx(ctx)
-	s.True(exist)
-	s.NotNil(db)
-	s.Equal(db.Statement.ConnPool, tx)
+	s.session = session.NewSession(db)
 }
 
 func (s *TransactionTestSuite) TestGetDB_returnDBWhenNoTx() {
-	db := s.gsession.GetDB(context.Background())
+	db := s.wrapper.GetDB(context.Background())
+	s.NotNil(db)
+	s.Equal(db, s.gdb)
+}
+
+func (s *TransactionTestSuite) TestGetDB_returnDBWhenWrongTypeTx() {
+	ctx := session.WithTx(context.Background(), "tx")
+	db := s.wrapper.GetDB(ctx)
 	s.NotNil(db)
 	s.Equal(db, s.gdb)
 }
@@ -83,7 +65,7 @@ func (s *TransactionTestSuite) TestGetDB_returnTx() {
 	s.Require().NoError(err)
 	ctx := session.WithTx(context.Background(), tx)
 
-	db := s.gsession.GetDB(ctx)
+	db := s.wrapper.GetDB(ctx)
 	s.NotNil(db)
 	s.Equal(db.Statement.ConnPool, tx)
 }
@@ -93,7 +75,7 @@ func (s *TransactionTestSuite) TestWithTransaction_transactionInjected() {
 		tx := session.GetTx(ctx)
 		s.Assert().NotNil(tx)
 
-		db := s.gsession.GetDB(ctx)
+		db := s.wrapper.GetDB(ctx)
 		s.Assert().NotNil(db)
 		s.Equal(tx, db.Statement.ConnPool)
 
@@ -115,7 +97,7 @@ func (s *TransactionTestSuite) TestWithTransaction_errPassed() {
 func (s *TransactionTestSuite) TestWithTransaction_transacitonCommited() {
 	data := model{ID: "test-transaciton-commited"}
 	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
-		res := s.gsession.GetDB(ctx).Create(&data)
+		res := s.wrapper.GetDB(ctx).Create(&data)
 		s.NoError(res.Error)
 		return nil
 	})
@@ -131,7 +113,7 @@ func (s *TransactionTestSuite) TestWithTransaction_transacitonCommited() {
 func (s *TransactionTestSuite) TestWithTransaction_transactionRolledBack() {
 	data := model{ID: "test-transaciton-rollback"}
 	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
-		res := s.gsession.GetDB(ctx).Create(&data)
+		res := s.wrapper.GetDB(ctx).Create(&data)
 		s.NoError(res.Error)
 		return errors.New("need to be rollback")
 	})
@@ -146,9 +128,9 @@ func (s *TransactionTestSuite) TestWithTransaction_transactionRolledBack() {
 
 func (s *TransactionTestSuite) TestWithTransaction_doubleTransactionInjection() {
 	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx := s.gsession.GetDB(ctx)
+		tx := s.wrapper.GetDB(ctx)
 		err := s.session.WithTransaction(ctx, func(ctx context.Context) error {
-			childTx := s.gsession.GetDB(ctx)
+			childTx := s.wrapper.GetDB(ctx)
 			s.Assert().Equal(tx.Statement.ConnPool, childTx.Statement.ConnPool)
 			return nil
 		})
@@ -163,10 +145,10 @@ func (s *TransactionTestSuite) TestWithTransaction_doubleTransactionCommitted() 
 	data1 := model{ID: "test-double-transaction-commit-1"}
 	data2 := model{ID: "test-double-transaction-commit-2"}
 	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
-		res := s.gsession.GetDB(ctx).Create(&data2)
+		res := s.wrapper.GetDB(ctx).Create(&data2)
 		s.NoError(res.Error)
 		err := s.session.WithTransaction(ctx, func(ctx context.Context) error {
-			res := s.gsession.GetDB(ctx).Create(&data1)
+			res := s.wrapper.GetDB(ctx).Create(&data1)
 			s.NoError(res.Error)
 			return nil
 		})
@@ -191,10 +173,10 @@ func (s *TransactionTestSuite) TestWithTransaction_doubleTransactionRolledBack()
 	data1 := model{ID: "test-double-transaction-rollback-1"}
 	data2 := model{ID: "test-double-transaction-rollback-2"}
 	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
-		res := s.gsession.GetDB(ctx).Create(&data2)
+		res := s.wrapper.GetDB(ctx).Create(&data2)
 		s.NoError(res.Error)
 		err := s.session.WithTransaction(ctx, func(ctx context.Context) error {
-			res := s.gsession.GetDB(ctx).Create(&data1)
+			res := s.wrapper.GetDB(ctx).Create(&data1)
 			s.NoError(res.Error)
 			return errors.New("need to be rollback")
 		})
@@ -214,7 +196,6 @@ func (s *TransactionTestSuite) TestWithTransaction_doubleTransactionRolledBack()
 	s.Error(res.Error)
 	s.ErrorIs(res.Error, gorm.ErrRecordNotFound)
 }
-
 
 func TestTransactionTestSuite(t *testing.T) {
 	suite.Run(t, new(TransactionTestSuite))

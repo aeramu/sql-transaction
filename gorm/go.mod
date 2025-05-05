@@ -3,7 +3,7 @@ module github.com/aeramu/sql-transaction/gorm
 go 1.21.2
 
 require (
-	github.com/aeramu/sql-transaction/session v0.1.0
+	github.com/aeramu/sql-transaction/session v0.3.0
 	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/stretchr/testify v1.10.0
 	gorm.io/driver/sqlite v1.5.7
