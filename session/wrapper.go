@@ -7,7 +7,7 @@ import (
 
 type Database[T any] interface {
 	GetDB(ctx context.Context) T
-	ConvertTx(tx *sql.Tx) T
+	ConvertTx(ctx context.Context, tx *sql.Tx) T
 }
 
 type DBWrapper[T any] interface {
@@ -30,5 +30,5 @@ func (w *wrapper[T]) GetDB(ctx context.Context) T {
 	if !ok || tx == nil {
 		return w.db.GetDB(ctx)
 	}
-	return w.db.ConvertTx(tx)
+	return w.db.ConvertTx(ctx, tx)
 }

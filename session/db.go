@@ -29,6 +29,6 @@ func (db *DB) GetDB(ctx context.Context) Executor {
 	return db.sqlDB
 }
 
-func (db *DB) ConvertTx(tx *sql.Tx) Executor {
+func (db *DB) ConvertTx(ctx context.Context, tx *sql.Tx) Executor {
 	return tx
 }
