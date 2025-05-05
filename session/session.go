@@ -6,33 +6,16 @@ import (
 	"fmt"
 )
 
-// Executor defines the common database operations that can be performed by both *sql.DB and *sql.Tx
-type Executor interface {
-	Exec(query string, args ...any) (sql.Result, error)
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	Prepare(query string) (*sql.Stmt, error)
-	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
-	Query(query string, args ...any) (*sql.Rows, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRow(query string, args ...any) *sql.Row
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+type Session interface {
+	WithTransaction(ctx context.Context, f func(ctx context.Context) error, opts ...*sql.TxOptions) error
 }
 
-type Session struct {
+func NewSession(db *sql.DB) Session {
+	return &session{db: db}
+}
+
+type session struct {
 	db *sql.DB
-}
-
-func New(db *sql.DB) *Session {
-	return &Session{db: db}
-}
-
-func getTx(ctx context.Context) (*sql.Tx, bool) {
-	val := GetTx(ctx)
-	tx, ok := val.(*sql.Tx)
-	if !ok || tx == nil {
-		return nil, false
-	}
-	return tx, true
 }
 
 // WithTransaction runs the function f in a transaction.
@@ -40,9 +23,9 @@ func getTx(ctx context.Context) (*sql.Tx, bool) {
 // If a transaction is not in progress, it will start a new one.
 // If the function f returns an error, the transaction will be rolled back.
 // If the function f returns nil, the transaction will be committed.
-func (s *Session) WithTransaction(ctx context.Context, f func(ctx context.Context) error, opts ...*sql.TxOptions) error {
-	tx, txExist := getTx(ctx)
-	if txExist {
+func (s *session) WithTransaction(ctx context.Context, f func(ctx context.Context) error, opts ...*sql.TxOptions) error {
+	tx, ok := GetTx(ctx).(*sql.Tx)
+	if ok && tx != nil {
 		return f(ctx)
 	}
 
@@ -78,13 +61,4 @@ func (s *Session) WithTransaction(ctx context.Context, f func(ctx context.Contex
 		return fmt.Errorf("commit error: %w", err)
 	}
 	return nil
-}
-
-// GetDB returns the appropriate executor (either transaction or database connection)
-func (s *Session) GetDB(ctx context.Context) Executor {
-	tx, exist := getTx(ctx)
-	if !exist {
-		return s.db
-	}
-	return tx
 }

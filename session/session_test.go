@@ -12,8 +12,9 @@ import (
 
 type SessionTestSuite struct {
 	suite.Suite
-	db    *Session
-	sqlDB *sql.DB
+	session Session
+	db      DBWrapper[Executor]
+	sqlDB   *sql.DB
 }
 
 // Setup test suite
@@ -25,7 +26,8 @@ func (s *SessionTestSuite) SetupTest() {
 	s.Require().NoError(err)
 
 	s.sqlDB = db
-	s.db = New(db)
+	s.session = NewSession(db)
+	s.db = NewDB(db)
 }
 
 func (s *SessionTestSuite) TearDownTest() {
@@ -34,51 +36,8 @@ func (s *SessionTestSuite) TearDownTest() {
 	s.sqlDB.Close()
 }
 
-func (s *SessionTestSuite) TestGetTx_noTx() {
-	tx, exist := getTx(context.Background())
-	s.False(exist)
-	s.Nil(tx)
-}
-
-func (s *SessionTestSuite) TestGetTx_txWrongType() {
-	ctx := WithTx(context.Background(), nil)
-	ctx = context.WithValue(ctx, txKey{}, "any")
-	tx, exist := getTx(ctx)
-	s.False(exist)
-	s.Nil(tx)
-}
-
-func (s *SessionTestSuite) TestGetTx_success() {
-	tx, err := s.sqlDB.Begin()
-	s.Require().NoError(err)
-	defer tx.Rollback()
-
-	ctx := WithTx(context.Background(), tx)
-	gotTx, exist := getTx(ctx)
-	s.True(exist)
-	s.NotNil(gotTx)
-	s.Equal(tx, gotTx)
-}
-
-func (s *SessionTestSuite) TestGetDB_returnDBWhenNoTx() {
-	db := s.db.GetDB(context.Background())
-	s.NotNil(db)
-	s.Equal(s.sqlDB, db)
-}
-
-func (s *SessionTestSuite) TestGetDB_returnTx() {
-	tx, err := s.sqlDB.Begin()
-	s.Require().NoError(err)
-	defer tx.Rollback()
-
-	ctx := WithTx(context.Background(), tx)
-	db := s.db.GetDB(ctx)
-	s.NotNil(db)
-	s.Equal(tx, db)
-}
-
 func (s *SessionTestSuite) TestWithTransaction_transactionInjected() {
-	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
 		tx := GetTx(ctx)
 		s.NotNil(tx)
 
@@ -92,9 +51,9 @@ func (s *SessionTestSuite) TestWithTransaction_transactionInjected() {
 	s.NoError(err)
 }
 
-func (s *SessionTestSuite) TestWithTransaction_errPassed() {
+func (s *SessionTestSuite) TestWithTransaction_errReturned() {
 	expectedErr := errors.New("test error")
-	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
 		return expectedErr
 	})
 
@@ -103,7 +62,7 @@ func (s *SessionTestSuite) TestWithTransaction_errPassed() {
 }
 
 func (s *SessionTestSuite) TestWithTransaction_transactionCommitted() {
-	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
 		db := s.db.GetDB(ctx)
 		_, err := db.Exec("INSERT INTO models (id) VALUES (?)", "test-commit")
 		return err
@@ -118,7 +77,7 @@ func (s *SessionTestSuite) TestWithTransaction_transactionCommitted() {
 }
 
 func (s *SessionTestSuite) TestWithTransaction_transactionRolledBack() {
-	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
 		db := s.db.GetDB(ctx)
 		_, err := db.Exec("INSERT INTO models (id) VALUES (?)", "test-rollback")
 		s.NoError(err)
@@ -134,9 +93,9 @@ func (s *SessionTestSuite) TestWithTransaction_transactionRolledBack() {
 }
 
 func (s *SessionTestSuite) TestWithTransaction_doubleTransactionInjection() {
-	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
 		outerTx := s.db.GetDB(ctx)
-		err := s.db.WithTransaction(ctx, func(ctx context.Context) error {
+		err := s.session.WithTransaction(ctx, func(ctx context.Context) error {
 			innerTx := s.db.GetDB(ctx)
 			s.Equal(outerTx, innerTx)
 			return nil
@@ -149,14 +108,14 @@ func (s *SessionTestSuite) TestWithTransaction_doubleTransactionInjection() {
 }
 
 func (s *SessionTestSuite) TestWithTransaction_doubleTransactionCommitted() {
-	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
 		outerDB := s.db.GetDB(ctx)
 		_, err := outerDB.Exec("INSERT INTO models (id) VALUES (?)", "test-double-commit-1")
 		s.NoError(err)
 
-		err = s.db.WithTransaction(ctx, func(ctx context.Context) error {
+		err = s.session.WithTransaction(ctx, func(ctx context.Context) error {
 			innerDB := s.db.GetDB(ctx)
-			_, err := innerDB.Exec("INSERT INTO models (id) VALUES (?)", "test-double-commit-2") 
+			_, err := innerDB.Exec("INSERT INTO models (id) VALUES (?)", "test-double-commit-2")
 			return err
 		})
 		s.NoError(err)
@@ -171,17 +130,17 @@ func (s *SessionTestSuite) TestWithTransaction_doubleTransactionCommitted() {
 	s.Equal("test-double-commit-1", id1)
 
 	err = s.sqlDB.QueryRow("SELECT id FROM models WHERE id = ?", "test-double-commit-2").Scan(&id2)
-	s.NoError(err) 
+	s.NoError(err)
 	s.Equal("test-double-commit-2", id2)
 }
 
 func (s *SessionTestSuite) TestWithTransaction_doubleTransactionRolledBack() {
-	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err := s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
 		outerDB := s.db.GetDB(ctx)
 		_, err := outerDB.Exec("INSERT INTO models (id) VALUES (?)", "test-double-rollback-1")
 		s.NoError(err)
 
-		err = s.db.WithTransaction(ctx, func(ctx context.Context) error {
+		err = s.session.WithTransaction(ctx, func(ctx context.Context) error {
 			innerDB := s.db.GetDB(ctx)
 			_, err := innerDB.Exec("INSERT INTO models (id) VALUES (?)", "test-double-rollback-2")
 			s.NoError(err)
@@ -194,16 +153,15 @@ func (s *SessionTestSuite) TestWithTransaction_doubleTransactionRolledBack() {
 	s.Error(err)
 
 	var count int
-	err = s.sqlDB.QueryRow("SELECT COUNT(*) FROM models WHERE id IN (?, ?)", 
+	err = s.sqlDB.QueryRow("SELECT COUNT(*) FROM models WHERE id IN (?, ?)",
 		"test-double-rollback-1", "test-double-rollback-2").Scan(&count)
 	s.NoError(err)
 	s.Equal(0, count)
 }
 
-
 func (s *SessionTestSuite) TestWithTransaction_panicRecovery() {
 	s.Panics(func() {
-		_ = s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
+		_ = s.session.WithTransaction(context.Background(), func(ctx context.Context) error {
 			panic("test panic")
 		})
 	})
