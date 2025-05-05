@@ -7,7 +7,7 @@ import (
 )
 
 type Session interface {
-	WithTransaction(ctx context.Context, f func(ctx context.Context) error, opts ...*sql.TxOptions) error
+	WithTransaction(ctx context.Context, f func(ctx context.Context) error) error
 }
 
 func NewSession(db *sql.DB) Session {
@@ -23,18 +23,13 @@ type session struct {
 // If a transaction is not in progress, it will start a new one.
 // If the function f returns an error, the transaction will be rolled back.
 // If the function f returns nil, the transaction will be committed.
-func (s *session) WithTransaction(ctx context.Context, f func(ctx context.Context) error, opts ...*sql.TxOptions) error {
+func (s *session) WithTransaction(ctx context.Context, f func(ctx context.Context) error) error {
 	tx, ok := GetTx(ctx).(*sql.Tx)
 	if ok && tx != nil {
 		return f(ctx)
 	}
 
-	var err error
-	var txOpt *sql.TxOptions
-	if len(opts) > 0 {
-		txOpt = opts[0]
-	}
-	tx, err = s.db.BeginTx(ctx, txOpt)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
