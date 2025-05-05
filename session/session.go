@@ -6,11 +6,6 @@ import (
 	"fmt"
 )
 
-// Session provides transaction management capabilities for database operations
-type Session interface {
-	WithTransaction(ctx context.Context, f func(ctx context.Context) error, opts ...*sql.TxOptions) error
-}
-
 // Executor defines the common database operations that can be performed by both *sql.DB and *sql.Tx
 type Executor interface {
 	Exec(query string, args ...any) (sql.Result, error)
@@ -23,12 +18,12 @@ type Executor interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-type session struct {
+type Session struct {
 	db *sql.DB
 }
 
-func NewSession(db *sql.DB) Session {
-	return &session{db: db}
+func New(db *sql.DB) *Session {
+	return &Session{db: db}
 }
 
 func getTx(ctx context.Context) (*sql.Tx, bool) {
@@ -40,7 +35,12 @@ func getTx(ctx context.Context) (*sql.Tx, bool) {
 	return tx, true
 }
 
-func (s *session) WithTransaction(ctx context.Context, f func(ctx context.Context) error, opts ...*sql.TxOptions) error {
+// WithTransaction runs the function f in a transaction.
+// If a transaction is already in progress, it will be used instead of starting a new one.
+// If a transaction is not in progress, it will start a new one.
+// If the function f returns an error, the transaction will be rolled back.
+// If the function f returns nil, the transaction will be committed.
+func (s *Session) WithTransaction(ctx context.Context, f func(ctx context.Context) error, opts ...*sql.TxOptions) error {
 	tx, txExist := getTx(ctx)
 	if txExist {
 		return f(ctx)
@@ -81,7 +81,7 @@ func (s *session) WithTransaction(ctx context.Context, f func(ctx context.Contex
 }
 
 // GetDB returns the appropriate executor (either transaction or database connection)
-func (s *session) GetDB(ctx context.Context) Executor {
+func (s *Session) GetDB(ctx context.Context) Executor {
 	tx, exist := getTx(ctx)
 	if !exist {
 		return s.db

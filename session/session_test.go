@@ -12,7 +12,7 @@ import (
 
 type SessionTestSuite struct {
 	suite.Suite
-	db    Session
+	db    *Session
 	sqlDB *sql.DB
 }
 
@@ -25,7 +25,7 @@ func (s *SessionTestSuite) SetupTest() {
 	s.Require().NoError(err)
 
 	s.sqlDB = db
-	s.db = NewSession(db)
+	s.db = New(db)
 }
 
 func (s *SessionTestSuite) TearDownTest() {
@@ -61,7 +61,7 @@ func (s *SessionTestSuite) TestGetTx_success() {
 }
 
 func (s *SessionTestSuite) TestGetDB_returnDBWhenNoTx() {
-	db := s.db.(*session).GetDB(context.Background())
+	db := s.db.GetDB(context.Background())
 	s.NotNil(db)
 	s.Equal(s.sqlDB, db)
 }
@@ -72,7 +72,7 @@ func (s *SessionTestSuite) TestGetDB_returnTx() {
 	defer tx.Rollback()
 
 	ctx := WithTx(context.Background(), tx)
-	db := s.db.(*session).GetDB(ctx)
+	db := s.db.GetDB(ctx)
 	s.NotNil(db)
 	s.Equal(tx, db)
 }
@@ -82,7 +82,7 @@ func (s *SessionTestSuite) TestWithTransaction_transactionInjected() {
 		tx := GetTx(ctx)
 		s.NotNil(tx)
 
-		db := s.db.(*session).GetDB(ctx)
+		db := s.db.GetDB(ctx)
 		s.NotNil(db)
 		s.Equal(tx, db)
 
@@ -104,7 +104,7 @@ func (s *SessionTestSuite) TestWithTransaction_errPassed() {
 
 func (s *SessionTestSuite) TestWithTransaction_transactionCommitted() {
 	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
-		db := s.db.(*session).GetDB(ctx)
+		db := s.db.GetDB(ctx)
 		_, err := db.Exec("INSERT INTO models (id) VALUES (?)", "test-commit")
 		return err
 	})
@@ -119,7 +119,7 @@ func (s *SessionTestSuite) TestWithTransaction_transactionCommitted() {
 
 func (s *SessionTestSuite) TestWithTransaction_transactionRolledBack() {
 	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
-		db := s.db.(*session).GetDB(ctx)
+		db := s.db.GetDB(ctx)
 		_, err := db.Exec("INSERT INTO models (id) VALUES (?)", "test-rollback")
 		s.NoError(err)
 		return errors.New("rollback error")
@@ -135,9 +135,9 @@ func (s *SessionTestSuite) TestWithTransaction_transactionRolledBack() {
 
 func (s *SessionTestSuite) TestWithTransaction_doubleTransactionInjection() {
 	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
-		outerTx := s.db.(*session).GetDB(ctx)
+		outerTx := s.db.GetDB(ctx)
 		err := s.db.WithTransaction(ctx, func(ctx context.Context) error {
-			innerTx := s.db.(*session).GetDB(ctx)
+			innerTx := s.db.GetDB(ctx)
 			s.Equal(outerTx, innerTx)
 			return nil
 		})
@@ -147,6 +147,59 @@ func (s *SessionTestSuite) TestWithTransaction_doubleTransactionInjection() {
 
 	s.NoError(err)
 }
+
+func (s *SessionTestSuite) TestWithTransaction_doubleTransactionCommitted() {
+	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
+		outerDB := s.db.GetDB(ctx)
+		_, err := outerDB.Exec("INSERT INTO models (id) VALUES (?)", "test-double-commit-1")
+		s.NoError(err)
+
+		err = s.db.WithTransaction(ctx, func(ctx context.Context) error {
+			innerDB := s.db.GetDB(ctx)
+			_, err := innerDB.Exec("INSERT INTO models (id) VALUES (?)", "test-double-commit-2") 
+			return err
+		})
+		s.NoError(err)
+		return nil
+	})
+
+	s.NoError(err)
+
+	var id1, id2 string
+	err = s.sqlDB.QueryRow("SELECT id FROM models WHERE id = ?", "test-double-commit-1").Scan(&id1)
+	s.NoError(err)
+	s.Equal("test-double-commit-1", id1)
+
+	err = s.sqlDB.QueryRow("SELECT id FROM models WHERE id = ?", "test-double-commit-2").Scan(&id2)
+	s.NoError(err) 
+	s.Equal("test-double-commit-2", id2)
+}
+
+func (s *SessionTestSuite) TestWithTransaction_doubleTransactionRolledBack() {
+	err := s.db.WithTransaction(context.Background(), func(ctx context.Context) error {
+		outerDB := s.db.GetDB(ctx)
+		_, err := outerDB.Exec("INSERT INTO models (id) VALUES (?)", "test-double-rollback-1")
+		s.NoError(err)
+
+		err = s.db.WithTransaction(ctx, func(ctx context.Context) error {
+			innerDB := s.db.GetDB(ctx)
+			_, err := innerDB.Exec("INSERT INTO models (id) VALUES (?)", "test-double-rollback-2")
+			s.NoError(err)
+			return errors.New("rollback error")
+		})
+		s.Error(err)
+		return err
+	})
+
+	s.Error(err)
+
+	var count int
+	err = s.sqlDB.QueryRow("SELECT COUNT(*) FROM models WHERE id IN (?, ?)", 
+		"test-double-rollback-1", "test-double-rollback-2").Scan(&count)
+	s.NoError(err)
+	s.Equal(0, count)
+}
+
 
 func (s *SessionTestSuite) TestWithTransaction_panicRecovery() {
 	s.Panics(func() {
